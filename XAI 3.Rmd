@@ -1,0 +1,211 @@
+---
+title: "XAI 3"
+author: "Natalia Hernández Cortés, Eurídice Corbí Verdú, Nicolás Nebot Silvestre"
+date: "2024-05-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## XAI 3
+
+```{r}
+library(randomForest)
+library(ggplot2)
+library(pdp)
+library(gridExtra)
+```
+
+### 1. One Dimensional Partial Dependence Plot
+
+```{r}
+day = read.csv('day.csv')
+
+bikes <- day %>%
+  select(dteday, workingday, holiday, season, weathersit, temp, hum, windspeed, cnt) %>%
+  mutate(
+    spring = ifelse(season == 2, 1, 0),
+    summer = ifelse(season == 3, 1, 0),
+    fall = ifelse(season == 4, 1, 0),
+    MISTY = ifelse(weathersit == 2, 1, 0),
+    RAIN = ifelse(weathersit == 3 | weathersit == 4, 1, 0),
+    temp = temp * (max(day$temp) - min(day$temp)) + min(day$temp),
+    hum = hum * (max(day$hum) - min(day$hum)) + min(day$hum),
+    windspeed = windspeed * (max(day$windspeed) - min(day$windspeed)) + min(day$windspeed),
+    days_since_2011 = as.numeric(difftime(as.Date(day$dteday), as.Date('2011-01-01'), units = 'days'))) %>%
+  select(-season, -weathersit, -dteday)
+```
+
+```{r}
+X = bikes[,-6]
+y = bikes[,6]
+
+set.seed(42)  
+rf_model <- randomForest(x = X, y = y, ntree = 100)
+```
+
+```{r}
+plots <- list()
+features <- colnames(X)
+
+for (feature in features) {
+  pdp_unidim <- partial(rf_model, pred.var = feature, train = X)
+  
+  p <- ggplot(pdp_unidim, aes_string(x = feature, y = "yhat")) +
+    geom_line() +
+    ylim(0, 6000) +
+    labs(title = paste("PDP for", feature),
+         x = feature,
+         y = "Predicted Bike Rentals") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    theme_minimal()
+  
+  plots[[feature]] <- p
+}
+
+grid.arrange(
+  plots[['days_since_2011']],
+  plots[['temp']],
+  ncol = 2
+)
+
+grid.arrange(
+  plots[['hum']],
+  plots[['windspeed']],
+  ncol = 2
+)
+```
+
+```{r}
+pdp_2011 <- partial(rf_model, pred.var="days_since_2011", train = X)
+
+ggplot(pdp_2011, aes(x = days_since_2011, y = yhat)) +
+  geom_line() +
+  ylim(0,6000) +
+  labs(title = "Partial Dependence Plot for Days since 2011",
+       x = "Days since 2011",
+       y = "Predicted Bike Rentals") + theme_minimal()
+```
+
+```{r}
+# Temperature
+pdp_temp <- partial(rf_model, pred.var = "temp", train = X)
+
+ggplot(pdp_temp, aes(x = temp, y = yhat)) +
+  geom_line() +
+  ylim(0,6000) +
+  labs(title = "Partial Dependence Plot for Temperature",
+       x = "Temperature",
+       y = "Predicted Bike Rentals") + theme_minimal()
+```
+
+```{r}
+pdp_hum <- partial(rf_model, pred.var = "hum", train = X)
+
+ggplot(pdp_hum, aes(x = hum, y = yhat)) +
+  geom_line() +
+  ylim(0,6000) +
+  labs(title = "Partial Dependence Plot for Humidity",
+       x = "Humidity",
+       y = "Predicted Bike Rentals") + theme_minimal()
+```
+
+```{r}
+pdp_wind <- partial(rf_model, pred.var = "windspeed", train = X)
+
+ggplot(pdp_wind, aes(x = windspeed, y = yhat)) +
+  geom_line() +
+  ylim(0,6000) +
+  labs(title = "Partial Dependence Plot for Windspeed",
+       x = "Windspeed",
+       y = "Predicted Bike Rentals") + theme_minimal()
+```
+
+### 2. Bidimensional Partial Dependence Plot
+
+```{r}
+set.seed(42) 
+sample_indices = sample(nrow(X), size = 500)  
+X_sample = X[sample_indices, ]
+y_sample = y[sample_indices]
+
+rf_model = randomForest(x = X_sample, y = y_sample, ntree = 100)
+```
+
+```{r}
+pdp_2d <- partial(rf_model, pred.var = c("hum", "temp"), grid.resolution = 50)
+
+ggplot(pdp_2d, aes(x = hum, y = temp, fill = yhat)) +
+  geom_tile(width = 0.01, height = 0.01) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  labs(title = "2D Partial Dependence Plot: Humidity vs Temperature",
+       x = "Humidity",
+       y = "Temperature",
+       fill = "Predicted Bike Rentals") +
+  theme_minimal()
+
+ggplot(pdp_2d, aes(x = hum, y = temp)) +
+  geom_point(alpha = 0.1) +
+  geom_density2d(aes(colour = ..level..), bins = 10) +
+  scale_colour_gradient(low = "blue", high = "red") +
+  labs(title = "Density Plot with 2D Partial Dependence Plot: Humidity vs Temperature",
+       x = "Humidity",
+       y = "Temperature") +
+  theme_minimal()
+```
+
+### 3. PDP to explain the price of a house
+
+```{r}
+house = read.csv("kc_house_data.csv")
+
+house = house %>% select('bedrooms', 'bathrooms', 'sqft_living', 
+                         'sqft_lot','floors', 'yr_built', 'price')
+
+X = house[,-7]
+y = house[,7]
+```
+
+```{r}
+set.seed(42)  
+sample_indices = sample(nrow(X), size = 1000)  
+X_sample = X[sample_indices, ]
+y_sample = y[sample_indices]
+
+rf_model = randomForest(x = X_sample, y = y_sample, ntree = 100)
+```
+
+```{r}
+plots <- list()
+
+for (feature in features) {
+  pdp_unidim <- partial(rf_model, pred.var = feature, train = X_sample)
+  
+  p <- ggplot(pdp_unidim, aes_string(x = feature, y = "yhat")) +
+    geom_line() +
+    ylim(0, 1500000) +
+    labs(title = paste("PDP for", feature),
+         x = feature,
+         y = "Predicted Price") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    theme_minimal()
+  
+  plots[[feature]] <- p
+}
+
+grid.arrange(
+  plots[['bedrooms']],
+  plots[['bathrooms']],
+  plots[['sqft_living']],
+  ncol = 3
+)
+
+grid.arrange(
+  plots[['sqft_lot']],
+  plots[['floors']],
+  plots[['yr_built']],
+  ncol = 3
+)
+```
